@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Refresh release actions to checkout v7, setup-go v7, github-script v9, and upload-artifact v7; update Electron build defaults to pnpm 11.25.0 and GoReleaser 2.18.0.
 - Add a protected organization-ruleset workflow that independently runs the
   Crabbox macOS release snapshot gate outside the target repository.
 - Add the repository owner as a co-owner for release-workflow trust anchors.

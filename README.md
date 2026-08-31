@@ -195,3 +195,11 @@ scripts/validate-workflows.sh
 ```
 
 This runs actionlint on reusable, CI, and example workflows; parses every YAML document with Psych safe loading; executes adversarial frozen-tag, native-build selection, nFPM target/inventory, draft-binding, Homebrew tap-selection, explicit-assets, fallback, live slacrawl/graincrawl platform-formula, and post-dispatch formula-binding scenarios; and enforces the required job/input topology, actions-read-only dual-architecture verifier, publisher hash binding, and immutable action references.
+
+CI also exercises the pinned actions with a named artifact upload/download and a read-only GitHub API request. Its build smoke check uses the Electron workflow's Node, pnpm, and GoReleaser defaults to build an unsigned native snapshot, unpack and run its binary against this README, and perform a frozen-lockfile pnpm install and build. With Go, GoReleaser, Node, and pnpm installed, run the same check locally:
+
+```sh
+scripts/smoke-release-build.sh
+```
+
+The smoke check removes its temporary build directory and Go cache on exit. It does not sign, tag, or publish a release.
