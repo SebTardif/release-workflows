@@ -3,7 +3,6 @@
 ## Unreleased
 
 - Preserve sanitized GitHub API error details when Homebrew tap repository or workflow preflight fails, with live read-only integration coverage. Thanks @steipete.
-- Preserve sanitized GitHub API error details in Homebrew tap repository and workflow preflight failures.
 - Add a protected organization-ruleset workflow that independently runs the
   Crabbox macOS release snapshot gate outside the target repository.
 - Add the repository owner as a co-owner for release-workflow trust anchors.
