@@ -5,27 +5,9 @@ import { execFileSync } from 'node:child_process';
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { loadWorkflow, workflowStep } from './workflow-source.cjs';
 
-const workflowPath = fileURLToPath(new URL('../.github/workflows/release-go-cli.yml', import.meta.url));
-const rubyExtractor = String.raw`
-  workflow = Psych.safe_load(
-    File.read(ARGV.fetch(0)),
-    permitted_classes: [],
-    permitted_symbols: [],
-    aliases: false
-  )
-  step = workflow.fetch('jobs').fetch('validate').fetch('steps').find do |candidate|
-    candidate['id'] == 'metadata'
-  end
-  abort 'release metadata step not found' unless step
-  print step.fetch('run')
-`;
-const metadataScript = execFileSync(
-  'ruby',
-  ['-rpsych', '-e', rubyExtractor, workflowPath],
-  { encoding: 'utf8' },
-);
+const metadataScript = workflowStep(loadWorkflow(), 'validate', 'id', 'metadata').run;
 
 function runMetadata(changelog, version = '1.2.3', packageManifest = { name: 'fixture', version }) {
   const fixtureRoot = mkdtempSync(join(tmpdir(), 'release-notes-extraction-'));
@@ -35,7 +17,6 @@ function runMetadata(changelog, version = '1.2.3', packageManifest = { name: 'fi
   writeFileSync(join(fixtureRoot, 'CHANGELOG.md'), changelog);
   writeFileSync(join(fixtureRoot, 'go.mod'), 'module example.test/fixture\n\ngo 1.24\n');
   writeFileSync(join(fixtureRoot, '.goreleaser.yml'), 'version: 2\n');
-  // Keep Bash 3.2 nounset behavior deterministic by making package_files non-empty.
   writeFileSync(join(fixtureRoot, 'package.json'), JSON.stringify(packageManifest));
 
   let thrown;
