@@ -560,7 +560,7 @@ jobs:
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" == "$BUNDLE_IDENTIFIER" ]]
             ditto -c -k --sequesterRsrc --keepParent "$app" "raw-macos/$PRODUCT_NAME-$arch.app.zip"
           done
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: raw-electron-macos-${{ github.run_id }}
           path: raw-macos
@@ -579,6 +579,80 @@ jobs:
         with:
           name: raw-electron-macos-${{ github.run_id }}
           path: raw-macos
+      - name: Validate and unpack unsigned apps
+        env:
+          PRODUCT_NAME: ${{ inputs.product-name }}
+        run: |
+          set -euo pipefail
+          python3 <<'PY'
+          import os, pathlib, stat, subprocess, unicodedata, zipfile
+
+          product = os.environ['PRODUCT_NAME'] + '.app'
+          for arch in ('x64', 'arm64'):
+              archive = pathlib.Path('raw-macos') / f'{os.environ["PRODUCT_NAME"]}-{arch}.app.zip'
+              destination = pathlib.Path('unsigned') / arch
+              destination.mkdir(parents=True, exist_ok=False)
+              with zipfile.ZipFile(archive) as payload:
+                  members = {}
+                  links = {}
+                  def canonical(name):
+                      return unicodedata.normalize('NFD', name).casefold()
+                  for entry in payload.infolist():
+                      name = entry.filename.rstrip('/')
+                      parts = name.split('/')
+                      if any(part in ('', '.', '..') for part in parts) or '\\' in name:
+                          raise ValueError('unsafe archive path')
+                      if parts[0] != product and not (parts[0] == '__MACOSX' and (len(parts) == 1 or parts[1] in (product, '._' + product))):
+                          raise ValueError('unexpected archive root')
+                      key = canonical(name)
+                      if key in members:
+                          raise ValueError('duplicate archive path')
+                      mode = entry.external_attr >> 16
+                      kind = stat.S_IFMT(mode)
+                      if kind not in (0, stat.S_IFREG, stat.S_IFDIR, stat.S_IFLNK):
+                          raise ValueError('unsupported archive file type')
+                      members[key] = entry
+                      if stat.S_ISLNK(mode):
+                          target = payload.read(entry).decode('utf-8')
+                          if not target or target.startswith('/') or '\\' in target:
+                              raise ValueError('unsafe archive symlink')
+                          links[key] = target
+                  # Do not let ditto write through a symlink, including case aliases on macOS.
+                  for name in members:
+                      for parent in pathlib.PurePosixPath(name).parents:
+                          if str(parent) in links:
+                              raise ValueError('archive member beneath symlink')
+                  def resolve(parts, seen=()):
+                      result = []
+                      for part in parts:
+                          if part in ('', '.'):
+                              continue
+                          if part == '..':
+                              if len(result) <= 1:
+                                  raise ValueError('archive symlink escapes app')
+                              result.pop()
+                              continue
+                          result.append(part)
+                          key = '/'.join(result)
+                          if key in links:
+                              if key in seen:
+                                  raise ValueError('cyclic archive symlink')
+                              result = resolve(result[:-1] + canonical(links[key]).split('/'), seen + (key,))
+                      return result
+                  for name in links:
+                      resolved = resolve(name.split('/'))
+                      if not resolved or resolved[0] != canonical(product):
+                          raise ValueError('archive symlink escapes app')
+              subprocess.run(['ditto', '-x', '-k', str(archive), str(destination)], check=True)
+              app = (destination / product).resolve(strict=True)
+              if not app.is_dir() or app != destination.resolve() / product:
+                  raise ValueError('invalid app root')
+              for root, directories, files in os.walk(app, followlinks=False):
+                  for name in directories + files:
+                      item = pathlib.Path(root) / name
+                      if item.is_symlink() and not item.resolve(strict=True).is_relative_to(app):
+                          raise ValueError('unpacked symlink escapes app')
+          PY
       - name: Import policy signer into ephemeral keychain
         id: signer
         env:
@@ -656,47 +730,38 @@ jobs:
             desc=$(file -b "$1")
             [[ "$desc" == Mach-O* ]]
           }
-          sort_paths_deepest_first() {
-            local -a raw=()
-            while IFS= read -r -d '' item; do
-              [[ -n "$item" ]] || continue
-              raw+=("$item")
-            done
-            local i j tmp n=${#raw[@]}
-            for ((i=0; i<n; i++)); do
-              for ((j=i+1; j<n; j++)); do
-                if (( ${#raw[j]} > ${#raw[i]} )); then
-                  tmp=${raw[i]}; raw[i]=${raw[j]}; raw[j]=$tmp
-                fi
-              done
-            done
-            (( n > 0 )) || return 0
-            printf '%s\0' "${raw[@]}"
-          }
           sign_app() {
             local app=$1 item
+            local paths="$RUNNER_TEMP/electron-sign-paths"
+            # One inside-out order seals nested apps before their enclosing frameworks.
+            python3 - "$app" >"$paths" <<'PY'
+          import os, pathlib, sys
+          app = pathlib.Path(sys.argv[1])
+          targets = []
+          for root, directories, files in os.walk(app, followlinks=False):
+              for name in directories + files:
+                  item = pathlib.Path(root) / name
+                  if item.is_symlink():
+                      continue
+                  if item.is_file() or item.suffix in ('.app', '.framework', '.xpc', '.appex', '.bundle'):
+                      targets.append(item)
+          for item in sorted(targets, key=lambda p: (-len(p.parts), str(p))):
+              sys.stdout.buffer.write(os.fsencode(item) + b'\0')
+          PY
             while IFS= read -r -d '' item; do
-              is_macho "$item" || continue
+              if [[ -f "$item" ]]; then is_macho "$item" || continue; fi
               sign_path "$item" "$inherit"
-            done < <(find "$app" -type f \( -name '*.dylib' -o -name '*.so' -o -name '*.node' -o -perm +111 \) -print0 | sort_paths_deepest_first)
-            while IFS= read -r -d '' item; do
-              sign_path "$item" "$inherit"
-            done < <(find "$app" -name '*.framework' -print0 | sort_paths_deepest_first)
-            while IFS= read -r -d '' item; do
-              if [[ "$item" == "$app" ]]; then
-                continue
-              fi
-              sign_path "$item" "$inherit"
-            done < <(find "$app" -name '*.app' -print0 | sort_paths_deepest_first)
+            done <"$paths"
             local requirement="identifier \"$BUNDLE_IDENTIFIER\" and anchor apple generic and certificate leaf[subject.OU] = \"$TEAM_ID\""
             codesign --force --timestamp --options runtime --identifier "$BUNDLE_IDENTIFIER" --requirements "=designated => $requirement" --entitlements "$main_entitlements" --keychain "$KEYCHAIN" --sign "$IDENTITY" "$app"
             codesign --verify --strict --deep -R="$requirement" "$app"
           }
           mkdir -p signed-macos
-          p8="$RUNNER_TEMP/AuthKey_${ASC_KEY_ID}.p8"; printf '%s' "$ASC_PRIVATE_KEY_P8" >"$p8"; chmod 600 "$p8"
+          p8="$RUNNER_TEMP/electron-notary-key.p8"
+          trap 'rm -f "$p8"' EXIT
+          umask 077
+          printf '%s' "$ASC_PRIVATE_KEY_P8" >"$p8"
           for arch in x64 arm64; do
-            mkdir -p "unsigned/$arch"
-            ditto -x -k "raw-macos/$PRODUCT_NAME-$arch.app.zip" "unsigned/$arch"
             app="unsigned/$arch/$PRODUCT_NAME.app"
             [[ -d "$app" ]]
             [[ "$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Contents/Info.plist")" == "$BUNDLE_IDENTIFIER" ]]
@@ -711,9 +776,13 @@ jobs:
             mkdir -p "$stage"
             ditto "$app" "$stage/$PRODUCT_NAME.app"
             ln -s /Applications "$stage/Applications"
-            hdiutil create -volname "$PRODUCT_NAME $VERSION" -srcfolder "$stage" -ov -format UDZO -imagekey zlib-level=9 "signed-macos/$PRODUCT_NAME-$VERSION-mac-$arch.dmg"
-            xcrun stapler staple "signed-macos/$PRODUCT_NAME-$VERSION-mac-$arch.dmg"
-            xcrun stapler validate "signed-macos/$PRODUCT_NAME-$VERSION-mac-$arch.dmg"
+            dmg="signed-macos/$PRODUCT_NAME-$VERSION-mac-$arch.dmg"
+            hdiutil create -volname "$PRODUCT_NAME $VERSION" -srcfolder "$stage" -ov -format UDZO -imagekey zlib-level=9 "$dmg"
+            codesign --force --timestamp --keychain "$KEYCHAIN" --sign "$IDENTITY" "$dmg"
+            xcrun notarytool submit "$dmg" --key "$p8" --key-id "$ASC_KEY_ID" --issuer "$ASC_ISSUER_ID" --no-s3-acceleration --wait --output-format json >"$RUNNER_TEMP/dmg-$arch.json"
+            [[ "$(jq -r '.status' "$RUNNER_TEMP/dmg-$arch.json")" == Accepted ]]
+            xcrun stapler staple "$dmg"
+            xcrun stapler validate "$dmg"
           done
           (
             cd signed-macos
@@ -750,7 +819,7 @@ jobs:
             echo "could not delete ephemeral signing keychain" >&2
             cleanup_failed=1
           fi
-          rm -f "$search_list_file" "$RUNNER_TEMP/electron-release.p12"
+          rm -f "$search_list_file" "$RUNNER_TEMP/electron-release.p12" "$RUNNER_TEMP/electron-notary-key.p8"
           exit "$cleanup_failed"
 
   assemble:
