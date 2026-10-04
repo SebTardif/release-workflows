@@ -82,8 +82,11 @@ assert.match(verify.slice(lastUnset), /"\.\/\$cli"/, 'unpacked CLI must run afte
 
 assert.doesNotMatch(draft, /actions\/checkout@/);
 assert.match(draft, /GH_REPO: \$\{\{ github\.repository \}\}/);
-assert.match(draft, /gh release create .* --verify-tag/);
-assert.match(draft, /gh release view "\$TAG" --json databaseId/);
+assert.match(draft, /gh api "repos\/\$\{GH_REPO\}\/git\/ref\/tags\/\$\{TAG\}"/);
+assert.match(draft, /release_id=\$\(gh api --method POST --input - --jq \.id "repos\/\$\{GH_REPO\}\/releases"/);
+assert.match(draft, /releases\/\$\{release_id\}\/assets\?name=/);
+assert.doesNotMatch(draft, /gh release view/);
+assert.doesNotMatch(draft, /gh release create/);
 
 assert.match(publish, /github\.paginate\(github\.rest\.repos\.listReleaseAssets/);
 assert.match(publish, /status >= 500 && status <= 599/);
