@@ -99,6 +99,10 @@ jobs:
           [[ "$REPOSITORY_TYPE" == openclaw || "$REPOSITORY_TYPE" == personal ]]
           [[ "$BUNDLE_IDENTIFIER" =~ ^[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]*[A-Za-z0-9])?)+$ ]]
           [[ "$CHECKSUM_FILENAME" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,254}$ ]]
+          if [[ "$CHECKSUM_FILENAME" == *. ]]; then
+            echo "checksum-filename cannot end with a dot because GitHub renames that asset" >&2
+            exit 1
+          fi
           checksum_name=$(printf '%s' "$CHECKSUM_FILENAME" | tr '[:upper:]' '[:lower:]')
           if [[ "$checksum_name" == asset-inventory.json || "$checksum_name" == release-notes.md ]]; then
             echo "checksum-filename collides with a reserved release control" >&2
