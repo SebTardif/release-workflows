@@ -24,9 +24,9 @@ if (process.env.GH_REPO !== 'openclaw/release-workflows') throw new Error('missi
 const inputIndex = args.indexOf('--input');
 const stdin = inputIndex >= 0 && args[inputIndex + 1] === '-' ? fs.readFileSync(0, 'utf8') : '';
 fs.appendFileSync(process.env.CALLS, JSON.stringify({ args, stdin }) + '\\n');
-const endpoint = args.find((arg) => arg.startsWith('repos/'));
-if (!endpoint || !endpoint.startsWith('repos/openclaw/release-workflows/')) process.exit(1);
-if (endpoint.endsWith('/releases')) console.log('123');
+const endpoint = args.find((arg) => arg.startsWith('repos/') || arg.startsWith('https://uploads.github.com/'));
+if (!endpoint || !(endpoint.startsWith('repos/openclaw/release-workflows/') || endpoint.startsWith('https://uploads.github.com/repos/openclaw/release-workflows/releases/'))) process.exit(1);
+if (endpoint.endsWith('/releases')) console.log('{"id":123,"upload_url":"https://uploads.github.com/repos/openclaw/release-workflows/releases/123/assets{?name,label}"}');
 `, { mode: 0o755 });
   const result = spawnSync('bash', ['-c', release.run], {
     cwd: join(root, 'workspace'), encoding: 'utf8',
@@ -40,17 +40,18 @@ if (endpoint.endsWith('/releases')) console.log('123');
   const calls = readFileSync(join(root, 'calls'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(calls.length, 2 + names.length);
   assert.deepEqual(calls[0].args, ['api', 'repos/openclaw/release-workflows/git/ref/tags/v1.2.3']);
-  assert.deepEqual(calls[1].args, ['api', '--method', 'POST', '--input', '-', '--jq', '.id', 'repos/openclaw/release-workflows/releases']);
+  assert.deepEqual(calls[1].args, ['api', '--method', 'POST', '--input', '-', 'repos/openclaw/release-workflows/releases']);
   const created = JSON.parse(calls[1].stdin);
   assert.equal(created.draft, true);
   assert.equal(created.tag_name, 'v1.2.3');
   assert.equal(created.name, 'v1.2.3');
   assert.equal(created.body, 'frozen RELEASE-NOTES.md\n');
   const uploads = calls.slice(2);
-  assert.deepEqual(uploads.map((call) => call.args.filter((arg) => arg.startsWith('repos/'))), names.map((name) => {
+  assert.deepEqual(uploads.map((call) => call.args.filter((arg) => arg.startsWith('https://uploads.github.com/'))), names.map((name) => {
     const encoded = execFileSync('jq', ['-rn', '--arg', 'name', name, '$name|@uri'], { encoding: 'utf8' }).trim();
-    return [`repos/openclaw/release-workflows/releases/123/assets?name=${encoded}`];
+    return [`https://uploads.github.com/repos/openclaw/release-workflows/releases/123/assets?name=${encoded}`];
   }));
+  assert.ok(!uploads.some((call) => call.args.some((arg) => arg.includes('api.github.com') || (arg.startsWith('repos/') && arg.includes('/assets')))));
   for (const [index, call] of uploads.entries()) {
     assert.deepEqual(call.args.slice(0, 5), ['api', '--method', 'POST', '-H', 'Content-Type: application/octet-stream']);
     assert.deepEqual(call.args.slice(-2), ['--input', `release-assets/${names[index]}`]);

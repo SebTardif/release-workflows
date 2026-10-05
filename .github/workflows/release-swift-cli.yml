@@ -858,14 +858,18 @@ jobs:
           (( ${#assets[@]} >= 6 ))
           gh api "repos/${GH_REPO}/git/ref/tags/${TAG}" >/dev/null
           payload=$(jq -n --arg tag "$TAG" --rawfile notes release-assets/RELEASE-NOTES.md '{tag_name:$tag, name:$tag, draft:true, body:$notes}')
-          release_id=$(gh api --method POST --input - --jq .id "repos/${GH_REPO}/releases" <<<"$payload")
+          created=$(gh api --method POST --input - "repos/${GH_REPO}/releases" <<<"$payload")
+          release_id=$(jq -r .id <<<"$created")
+          upload_base=$(jq -r .upload_url <<<"$created")
+          upload_base=${upload_base%\{*}
           [[ "$release_id" =~ ^[0-9]+$ ]]
+          [[ "$upload_base" == "https://uploads.github.com/repos/${GH_REPO}/releases/${release_id}/assets" ]]
           for asset in "${assets[@]}"; do
             name=${asset##*/}
             encoded_name=$(jq -rn --arg name "$name" '$name|@uri')
             gh api --method POST \
               -H "Content-Type: application/octet-stream" \
-              "repos/${GH_REPO}/releases/${release_id}/assets?name=${encoded_name}" \
+              "${upload_base}?name=${encoded_name}" \
               --input "$asset" >/dev/null
           done
           echo "release-id=$release_id" >>"$GITHUB_OUTPUT"
