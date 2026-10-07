@@ -13,6 +13,8 @@ After binding the draft assets to both verifier attestations, every publisher re
 
 The configurable checksum filename must be distinct from release controls and payload filenames, including case aliases. Swift rejects collisions with its configured archives during input validation; Electron also checks caller-produced asset names during assembly, before writing the manifest.
 
+All archetypes reject checksum filenames ending in a dot during input validation because GitHub renames those assets on upload.
+
 Callers pin the stable `@v1` compatibility tag, never a branch or pre-release tag:
 
 ```yaml
