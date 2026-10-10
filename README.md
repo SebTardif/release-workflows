@@ -48,6 +48,8 @@ The signer snapshots the user keychain search list before creating its ephemeral
 
 Draft creation resolves the GitHub repository explicitly and downloads only the immutable signed payload into a fresh job workspace. It does not check out caller source, so tracked files named `release-assets/*` cannot contaminate the draft uploads.
 
+Swift and Electron retain the release ID returned by draft creation and upload assets through that response's validated `uploads.github.com` URL. An older draft with the same tag cannot replace the ID passed to publication. Failed uploads do not export a draft ID.
+
 When `homebrew-formula` is nonempty, the handoff dispatches the configured tap's `update-formula.yml` with the exact verified macOS archive, waits for the uniquely correlated run, then requires the resulting formula URL and SHA-256 to equal the attested release asset. A pre-existing versioned Unreleased changelog section satisfies closeout; otherwise the workflow opens a closeout PR.
 
 See [`examples/release-swift-cli-caller.yml`](examples/release-swift-cli-caller.yml) for the thin caller. The consumer must provision `MACOS_SIGNING_P12`, `MACOS_SIGNING_P12_PASSWORD`, `ASC_KEY_ID`, `ASC_ISSUER_ID`, and `ASC_PRIVATE_KEY_P8`; Homebrew handoff additionally needs `TAP_TOKEN`.
