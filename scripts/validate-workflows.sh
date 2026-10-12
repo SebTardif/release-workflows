@@ -29,6 +29,8 @@ node scripts/test-split-host-build.mjs
 node scripts/test-swift-cli-workflow.mjs
 node scripts/test-swift-keychain-lifecycle.mjs
 node scripts/test-swift-draft-isolation.mjs
+node scripts/test-sparkle-tools.mjs
+node scripts/test-sparkle-workflow.mjs
 node scripts/test-electron-workflow.mjs
 node scripts/test-electron-signing.mjs
 node scripts/test-electron-draft-context.mjs
