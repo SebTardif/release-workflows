@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Add tag-push entrypoints and full no-publish Go CLI rehearsals, retaining signed verification artifacts without tags, drafts, tap updates, or closeout PRs.
+
 ## 1.11.0 - 2026-10-11
 
 - Add npm and source-only release archetypes with protected frozen sources, no-publish dry runs, independent payload verification, exact-byte publication, OIDC npm provenance, and verified optional Homebrew handoff.
