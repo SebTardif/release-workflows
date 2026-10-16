@@ -1068,6 +1068,47 @@ jobs:
       with:
         node-version: '24'
         package-manager-cache: false
+    - name: Preflight npm trusted publishers
+      uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
+      env:
+        PAYLOAD: "${{ runner.temp }}/payload"
+      with:
+        script: |-
+          const fs = require('node:fs');
+          const plan = JSON.parse(fs.readFileSync(`${process.env.PAYLOAD}/PACKAGE-PLAN.json`, 'utf8'));
+          for (const p of plan) {
+            // Completed versions still take the publisher's exact-byte resume path.
+            const metadata = await fetch(`https://registry.npmjs.org/${encodeURIComponent(p.name)}/${p.version}`, {
+              redirect: 'error', signal: AbortSignal.timeout(30000),
+            }).catch(() => { throw new Error(`${p.name}: npm metadata request failed during trusted-publisher preflight`); });
+            await metadata.body?.cancel();
+            if (metadata.ok) continue;
+            if (metadata.status !== 404) throw new Error(`${p.name}: npm metadata preflight failed (HTTP ${metadata.status})`);
+            const existingPackage = await fetch(`https://registry.npmjs.org/${encodeURIComponent(p.name)}`, {
+              redirect: 'error', signal: AbortSignal.timeout(30000),
+            }).catch(() => { throw new Error(`${p.name}: npm package existence request failed during trusted-publisher preflight`); });
+            await existingPackage.body?.cancel();
+            if (existingPackage.status === 404) throw new Error(`${p.name} must already exist and have caller trusted publishing configured`);
+            if (!existingPackage.ok) throw new Error(`${p.name}: npm package existence preflight failed (HTTP ${existingPackage.status})`);
+            const idToken = await core.getIDToken('npm:registry.npmjs.org').catch(() => {
+              throw new Error(`${p.name}: GitHub OIDC token unavailable; grant id-token: write in the caller workflow`);
+            });
+            // Exchange only; never publish, persist tokens, or retry a failed request.
+            const escapedName = p.name.replace('/', '%2f');
+            const response = await fetch(`https://registry.npmjs.org/-/npm/v1/oidc/token/exchange/package/${escapedName}`, {
+              method: 'POST', headers: { Authorization: `Bearer ${idToken}` },
+              redirect: 'error', signal: AbortSignal.timeout(30000),
+            }).catch(() => { throw new Error(`${p.name}: npm OIDC exchange request failed; no publication was attempted`); });
+            const body = await response.json().catch(() => ({}));
+            if (!response.ok) {
+              if ([401, 403, 404].includes(response.status) || body.code === 'ENEEDAUTH' || body.error === 'ENEEDAUTH') {
+                throw new Error(`${p.name}: npm OIDC exchange failed (HTTP ${response.status}). The trusted publisher may be missing or expired: an unused record expires after 2 days without a successful OIDC publish and cannot be used or edited. Delete any expired record and recreate this package's trusted publisher with the same repository and caller workflow filename (not release-npm-package.yml), then complete the first publish within 2 days. No publication was attempted.`);
+              }
+              throw new Error(`${p.name}: npm OIDC exchange failed (HTTP ${response.status}); no publication was attempted`);
+            }
+            if (typeof body.token !== 'string' || !body.token) throw new Error(`${p.name}: npm OIDC exchange returned no token; no publication was attempted`);
+            core.info(`${p.name}: trusted-publisher preflight passed`);
+          }
     - name: Recheck frozen tag before registry publication
       uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3
       env:
