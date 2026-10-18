@@ -28,10 +28,16 @@ process.on('exit', () => rmSync(root, { recursive: true, force: true }));
 function python(source, env = {}) {
   const result = spawnSync('python3', ['-c', source], { cwd: root, env: { ...process.env, ...env }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr + result.stdout);
+  return result;
 }
 
 test('all extracted production Python tools compile', () => {
   python(`import py_compile\nfrom pathlib import Path\nfor p in Path('.').glob('*.py'): py_compile.compile(str(p), doraise=True)`);
+});
+
+test('macOS runner provides the older SDK required by the Swift runtime audit', { skip: process.platform !== 'darwin' }, () => {
+  const result = python("from runtime import discover_sdks, choose_sdk\nchoose_sdk(discover_sdks(), '15.0')");
+  console.log(result.stderr);
 });
 
 test('production input validator rejects path, layout, version, secret and checksum ambiguity', () => {
@@ -613,7 +619,7 @@ test('production attestation preserves CRLF release-note bytes', () => {
   const run = workflowStep(workflow, 'verify', 'name', 'Verify inventory, Sparkle signature, sealed app, DMG, and CLI').run;
   const program = run.split("python3 - <<'PYCODE'\n").at(-1).split('\nPYCODE')[0];
   python(`from pathlib import Path\nPath('release-assets').mkdir(exist_ok=True)\nfor name,data in [('RELEASE-NOTES.md',b'line one\\r\\nline two\\r\\n'),('ASSET-INVENTORY.json',b'{}'),('checksums.txt',b'hashes\\n')]: (Path('release-assets')/name).write_bytes(data)`);
-  const result = spawnSync('python3', ['-c', program], { cwd: root, env: { ...process.env, CHECKSUM_FILENAME: 'checksums.txt', GITHUB_REPOSITORY: 'openclaw/fixture', GITHUB_RUN_ID: '1', PAYLOAD_ARTIFACT: 'payload', TAG: 'v1.2.3', TARGET_SHA: 'commit', EXPECTED_ARCH: 'arm64', VERIFY_RUNNER: 'macos-15' }, encoding: 'utf8' });
+  const result = spawnSync('python3', ['-c', program], { cwd: root, env: { ...process.env, CHECKSUM_FILENAME: 'checksums.txt', GITHUB_REPOSITORY: 'openclaw/fixture', GITHUB_RUN_ID: '1', PAYLOAD_ARTIFACT: 'payload', TAG: 'v1.2.3', TARGET_SHA: 'commit', EXPECTED_ARCH: 'arm64', VERIFY_RUNNER: 'xcode-27', VERIFIER_ID: 'arm64' }, encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
   assert.equal(JSON.parse(readFileSync(join(root, 'verified-sparkle-attestation.json'), 'utf8')).releaseNotes, 'line one\r\nline two\r\n');
 });
